@@ -337,7 +337,7 @@ if scan_clicked:
             time.sleep(0.5)
             try:
                 response = requests.post(
-                    "http://127.0.0.1:8000/scan",
+                    "https://web-production-4e4a9.up.railway.app/scan",
                     params={"prompt": prompt},
                     timeout=30
                 )
