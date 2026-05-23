@@ -1,6 +1,8 @@
 import os
 import json
-from fastapi import FastAPI
+import csv
+import io
+from fastapi import FastAPI, UploadFile, File
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from dotenv import load_dotenv
@@ -10,7 +12,7 @@ load_dotenv()
 app = FastAPI(
     title="Red Team AI",
     description="Automated LLM Security Testing Toolkit",
-    version="2.0"
+    version="3.0"
 )
 
 llm = ChatOpenAI(
@@ -57,8 +59,8 @@ def home():
     return {
         "name": "Red Team AI",
         "description": "Automated LLM Security Testing Toolkit",
-        "version": "2.0",
-        "endpoints": ["/scan", "/docs"]
+        "version": "3.0",
+        "endpoints": ["/scan", "/batch-scan", "/docs"]
     }
 
 @app.post("/scan")
@@ -89,4 +91,66 @@ def scan_prompt(prompt: str):
         "confidence": result.get("confidence", "LOW"),
         "reason": result.get("reason", ""),
         "status": "THREAT DETECTED" if result.get("is_attack") else "CLEAN"
+    }
+
+@app.post("/batch-scan")
+async def batch_scan(file: UploadFile = File(...)):
+    contents = await file.read()
+    decoded = contents.decode("utf-8")
+    reader = csv.reader(io.StringIO(decoded))
+
+    prompts = [row[0] for row in reader if row]
+
+    if not prompts:
+        return {"error": "No prompts found in file"}
+
+    results = []
+    threat_count = 0
+    clean_count = 0
+    attack_types = {}
+
+    for prompt in prompts[:20]:
+        messages = [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=f"Analyze this prompt: '{prompt}'")
+        ]
+
+        response = llm.invoke(messages)
+
+        try:
+            clean_resp = response.content.strip()
+            clean_resp = clean_resp.replace("```json", "").replace("```", "").strip()
+            result = json.loads(clean_resp)
+        except:
+            result = {
+                "is_attack": False,
+                "attack_type": "none",
+                "confidence": "LOW",
+                "reason": "Could not analyze"
+            }
+
+        is_attack = result.get("is_attack", False)
+        attack_type = result.get("attack_type", "none")
+
+        if is_attack:
+            threat_count += 1
+            attack_types[attack_type] = attack_types.get(attack_type, 0) + 1
+        else:
+            clean_count += 1
+
+        results.append({
+            "prompt": prompt,
+            "is_attack": is_attack,
+            "attack_type": attack_type,
+            "confidence": result.get("confidence", "LOW"),
+            "reason": result.get("reason", ""),
+            "status": "THREAT DETECTED" if is_attack else "CLEAN"
+        })
+
+    return {
+        "total_scanned": len(results),
+        "threats_found": threat_count,
+        "clean_count": clean_count,
+        "attack_breakdown": attack_types,
+        "results": results
     }
