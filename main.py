@@ -6,6 +6,7 @@ from fastapi import FastAPI, UploadFile, File
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from dotenv import load_dotenv
+import pypdf
 
 load_dotenv()
 
@@ -54,6 +55,41 @@ Reply with ONLY this JSON, no extra text:
   "reason": "one sentence explanation"
 }"""
 
+def extract_prompts_from_csv(contents: bytes):
+    decoded = contents.decode("utf-8")
+    reader = csv.reader(io.StringIO(decoded))
+    return [row[0].strip() for row in reader if row and row[0].strip()]
+
+def extract_prompts_from_pdf(contents: bytes):
+    pdf_reader = pypdf.PdfReader(io.BytesIO(contents))
+    text = ""
+    for page in pdf_reader.pages:
+        text += page.extract_text() + "\n"
+    sentences = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if len(line) > 10:
+            sentences.append(line)
+    return sentences
+
+async def analyze_prompt(prompt: str):
+    messages = [
+        SystemMessage(content=SYSTEM_PROMPT),
+        HumanMessage(content=f"Analyze this prompt: '{prompt}'")
+    ]
+    response = llm.invoke(messages)
+    try:
+        clean = response.content.strip()
+        clean = clean.replace("```json", "").replace("```", "").strip()
+        return json.loads(clean)
+    except:
+        return {
+            "is_attack": False,
+            "attack_type": "none",
+            "confidence": "LOW",
+            "reason": "Could not analyze"
+        }
+
 @app.get("/")
 def home():
     return {
@@ -64,26 +100,8 @@ def home():
     }
 
 @app.post("/scan")
-def scan_prompt(prompt: str):
-    messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=f"Analyze this prompt: '{prompt}'")
-    ]
-
-    response = llm.invoke(messages)
-
-    try:
-        clean = response.content.strip()
-        clean = clean.replace("```json", "").replace("```", "").strip()
-        result = json.loads(clean)
-    except:
-        result = {
-            "is_attack": False,
-            "attack_type": "none",
-            "confidence": "LOW",
-            "reason": "Could not analyze prompt"
-        }
-
+async def scan_prompt(prompt: str):
+    result = await analyze_prompt(prompt)
     return {
         "prompt": prompt,
         "is_attack": result.get("is_attack", False),
@@ -96,10 +114,14 @@ def scan_prompt(prompt: str):
 @app.post("/batch-scan")
 async def batch_scan(file: UploadFile = File(...)):
     contents = await file.read()
-    decoded = contents.decode("utf-8")
-    reader = csv.reader(io.StringIO(decoded))
+    filename = file.filename.lower()
 
-    prompts = [row[0] for row in reader if row]
+    if filename.endswith(".csv"):
+        prompts = extract_prompts_from_csv(contents)
+    elif filename.endswith(".pdf"):
+        prompts = extract_prompts_from_pdf(contents)
+    else:
+        return {"error": "Unsupported file type. Please upload CSV or PDF."}
 
     if not prompts:
         return {"error": "No prompts found in file"}
@@ -110,25 +132,7 @@ async def batch_scan(file: UploadFile = File(...)):
     attack_types = {}
 
     for prompt in prompts[:20]:
-        messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=f"Analyze this prompt: '{prompt}'")
-        ]
-
-        response = llm.invoke(messages)
-
-        try:
-            clean_resp = response.content.strip()
-            clean_resp = clean_resp.replace("```json", "").replace("```", "").strip()
-            result = json.loads(clean_resp)
-        except:
-            result = {
-                "is_attack": False,
-                "attack_type": "none",
-                "confidence": "LOW",
-                "reason": "Could not analyze"
-            }
-
+        result = await analyze_prompt(prompt)
         is_attack = result.get("is_attack", False)
         attack_type = result.get("attack_type", "none")
 
