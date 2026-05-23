@@ -408,10 +408,10 @@ with tab2:
     st.markdown('<div class="section-label">// BATCH PROMPT ANALYSIS</div>', unsafe_allow_html=True)
     st.markdown("""
     <div style="font-family:'Share Tech Mono',monospace;font-size:0.8rem;color:#8b949e;margin-bottom:1rem;">
-        Upload a CSV file with one prompt per line. Maximum 20 prompts per scan.
+        Upload a CSV or PDF file. Maximum 20 prompts per scan.
     </div>""", unsafe_allow_html=True)
 
-    uploaded_file = st.file_uploader("", type=["csv"], label_visibility="collapsed")
+    uploaded_file = st.file_uploader("", type=["csv", "pdf"], label_visibility="collapsed")
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
